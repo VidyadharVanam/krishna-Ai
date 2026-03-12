@@ -1,0 +1,638 @@
+{
+  "name": "AI Personal Assistant - Multi-Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "1c18a63d-c059-4ceb-9e92-cabf8f3cd8da",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        2512,
+        3920
+      ],
+      "webhookId": "telegram-webhook-ai-agent",
+      "credentials": {
+        "telegramApi": {
+          "id": "CUqagr9FbxuZ9fLt",
+          "name": "vvbot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-1",
+              "name": "userMessage",
+              "value": "={{ $json.message.text }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-2",
+              "name": "chatId",
+              "value": "={{ $json.message.chat.id }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-3",
+              "name": "userName",
+              "value": "={{ $json.message.from.first_name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e19192d0-075d-488f-a6f3-f31f9552cfe1",
+      "name": "Extract Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2736,
+        3920
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Extract Message').first().json.userMessage }}",
+        "options": {
+          "systemMessage": "You are a task router. You MUST return ONLY a valid JSON object. Nothing else.\n\nRules:\n- If message contains words like \"email\", \"mail\", \"send\", \"inbox\", \"gmail\" → route = \"gmail\"\n- If message contains \"whatsapp\", \"send whatsapp\", \"whatsapp message\" → route = \"whatsapp\"\n- If message contains \"note\", \"notion\", \"task\", \"database\", \"create note\", \"add note\" → route = \"notion\"\n- Everything else → route = \"general\"\n\nExample output:\n{\"route\": \"gmail\", \"task\": \"send email to test@gmail.com subject Hello body Hi there\"}\n\nIMPORTANT: Return ONLY the JSON. No explanation. No other text. No markdown."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2928,
+        4096
+      ],
+      "id": "2c5dab0f-385b-4512-9671-0f08c6130e8c",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "llama3.1:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        4304
+      ],
+      "id": "022315a5-9e71-4564-99f1-8cc80f0cc890",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "PGWWzQDTbjiCVGpU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get AI Agent output\nconst content = $input.first().json.output || \n                $input.first().json.message?.content || '';\n\nlet route = 'general';\nlet task = '';\n\n// Try to extract JSON even if surrounded by text\nconst jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\nif (jsonMatch) {\n  try {\n    const parsed = JSON.parse(jsonMatch[0]);\n    route = parsed.route || 'general';\n    task = parsed.task || '';\n  } catch(e) {\n    route = 'general';\n  }\n}\n\n// Get user message safely\nconst originalMessage = $('Extract Message').first().json.userMessage || '';\n\n// Force route based on keywords if AI failed\nconst userMessage = originalMessage.toLowerCase();\nif (route === 'general' && userMessage) {\n  if (userMessage.includes('email') || \n      userMessage.includes('mail') || \n      userMessage.includes('gmail') ||\n      userMessage.includes('send email')) {\n    route = 'gmail';\n  } else if (userMessage.includes('whatsapp')) {\n    route = 'whatsapp';\n  } else if (userMessage.includes('notion') || \n             userMessage.includes('note') || \n             userMessage.includes('task')) {\n    route = 'notion';\n  }\n}\n\ntask = task || originalMessage;\n\nreturn {\n  route: route,\n  task: task,\n  chatId: $('Extract Message').first().json.chatId || '',\n  userName: $('Extract Message').first().json.userName || '',\n  userMessage: originalMessage\n};"
+      },
+      "id": "a47a36ca-c0f7-4e47-abd6-1db56cefc390",
+      "name": "Parse Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        3920
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.route }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "gmail"
+            },
+            {
+              "value2": "whatsapp",
+              "output": 1
+            },
+            {
+              "value2": "notion",
+              "output": 2
+            },
+            {
+              "value2": "general",
+              "output": 3
+            }
+          ]
+        },
+        "fallbackOutput": 3
+      },
+      "id": "d60e88ca-cda2-4e42-ba2e-b3a93f8e21bd",
+      "name": "Route Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        3408,
+        3920
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Task: {{ $json.task }}\nUser: {{ $json.userName }}\n\nExtract the email address, subject and body from the task and send the email immediately using the Gmail tool.",
+        "options": {
+          "systemMessage": "You are the Gmail Agent. You MUST use the Gmail tool to send emails.\nNEVER say task completed without actually calling the Gmail tool first.\nWhen user wants to send an email:\n1. Extract: to, subject, body from the task\n2. CALL the Gmail send tool immediately\n3. Only after tool responds, confirm to user\nIMPORTANT: You are NOT allowed to simulate or pretend to send emails.\nYou MUST call the actual Gmail tool."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3632,
+        3600
+      ],
+      "id": "2dc9011a-0cb0-4b13-93f6-107b1975bd0d",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "model": "llama3.1:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3616,
+        3776
+      ],
+      "id": "0b7cc8d4-77d7-464e-8cb3-107cd4d1a9ed",
+      "name": "Ollama Chat Model1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "PGWWzQDTbjiCVGpU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $fromAI('to', 'Email address to send to') }}",
+        "subject": "={{ $fromAI('subject', 'Email subject line') }}",
+        "emailType": "text",
+        "message": "={{ $fromAI('body', 'Email body content') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        3984,
+        3728
+      ],
+      "id": "128c307d-1c69-4a00-8269-dd27a6ffd675",
+      "name": "Send a message in Gmail",
+      "webhookId": "62968363-1191-4b47-b95a-52c6a55b2fef",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "8pI1tQkRsLt9A5Ik",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Task: {{ $json.task }}\nUser: {{ $json.userName }}\n\nThe user wants to send a WhatsApp message. Extract the recipient and message from the task.\nSince no real WhatsApp tool is connected yet, respond with a confirmation message telling the user what you would send and to whom.",
+        "options": {
+          "systemMessage": "You are the WhatsApp Agent. Handle WhatsApp messaging tasks.\nBe friendly and use emojis.\nIf no WhatsApp tool is connected, simulate the action and tell the user:\n'✅ WhatsApp message prepared for [recipient]: [message]'\nMax 150 words."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3632,
+        3888
+      ],
+      "id": "5c2f0146-79c4-4779-9755-a469a7e8f6c4",
+      "name": "AI Agent5"
+    },
+    {
+      "parameters": {
+        "model": "llama3.1:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3632,
+        4064
+      ],
+      "id": "864cf388-c3e4-41eb-815e-368068dbfaf1",
+      "name": "Ollama Chat Model2",
+      "credentials": {
+        "ollamaApi": {
+          "id": "PGWWzQDTbjiCVGpU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Task: {{ $json.task }}\nUser: {{ $json.userName }}\n\nHandle this Notion task using the Notion tool. Create, update or search notes/tasks as requested.",
+        "options": {
+          "systemMessage": "You are the Notion Agent. You MUST call the Create Notion Page tool immediately.\n\nNEVER show JSON or function calls in your response.\nNEVER simulate or pretend to create notes.\nNEVER say \"Here's the function call\".\n\nWhen user wants to create a note:\n1. Directly call the Create Notion Page tool\n2. Pass title and content to the tool\n3. Wait for tool response\n4. Only then confirm to user\n\nYou MUST use the actual tool. No exceptions."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3632,
+        4192
+      ],
+      "id": "8c69843d-4229-43d8-956b-75716751f9dd",
+      "name": "AI Agent2"
+    },
+    {
+      "parameters": {
+        "model": "llama3.1:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3632,
+        4368
+      ],
+      "id": "1db7c4c0-6014-4b1c-9867-6dc11e61a3f3",
+      "name": "Ollama Chat Model3",
+      "credentials": {
+        "ollamaApi": {
+          "id": "PGWWzQDTbjiCVGpU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=User name: {{ $json.userName }}\nUser message: {{ $json.userMessage }}\n\nReply to the user by their name in a friendly way using emojis. Max 150 words.",
+        "options": {
+          "systemMessage": "You are Krishna, a friendly personal assistant bot.\nAlways address the user by their name which is provided in the prompt.\nBe helpful, warm and use emojis.\nRemember details the user shares with you and refer to them naturally."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3616,
+        4496
+      ],
+      "id": "118621c8-4033-451b-a51a-e99ce0161f96",
+      "name": "AI Agent3"
+    },
+    {
+      "parameters": {
+        "model": "llama3.1:8b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3616,
+        4656
+      ],
+      "id": "73c4cfd7-03f8-48f5-9ccd-2ed06033cc86",
+      "name": "Ollama Chat Model4",
+      "credentials": {
+        "ollamaApi": {
+          "id": "PGWWzQDTbjiCVGpU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Extract Message').first().json.chatId }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        3856,
+        4656
+      ],
+      "id": "51ae579b-0d59-490a-8138-f98d6f36a8d8",
+      "name": "Memory"
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentContent = $input.first().json.output || $input.first().json.message?.content || 'Task completed.';\nconst chatId = $('Parse Route').first().json.chatId;\nconst userName = $('Parse Route').first().json.userName;\n\nreturn {\n  chatId: chatId,\n  userName: userName,\n  finalMessage: agentContent\n};"
+      },
+      "id": "d8e313ad-d126-4a1a-8f56-f00f898471a5",
+      "name": "Merge Responses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        4016
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.finalMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "9e0cb65c-324e-4dcd-94d2-add654d092f2",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4608,
+        4000
+      ],
+      "webhookId": "49d78fcb-8f9d-479e-b9c8-1efa217fd513",
+      "credentials": {
+        "telegramApi": {
+          "id": "CUqagr9FbxuZ9fLt",
+          "name": "vvbot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pageId": {
+          "__rl": true,
+          "value": "32195f074e5d80e58e36d5bc1aa8a530",
+          "mode": "id"
+        },
+        "title": "=={{ $fromAI('title', 'Title of the note') }}",
+        "blockUi": {
+          "blockValues": [
+            {
+              "textContent": "=={{ $fromAI('content', 'Content of the note') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notionTool",
+      "typeVersion": 2.2,
+      "position": [
+        3856,
+        4352
+      ],
+      "id": "f0125a72-8582-4895-9641-066cee0b2d55",
+      "name": "Create a page in Notion",
+      "credentials": {
+        "notionApi": {
+          "id": "7UnCrmq15NgEuP4X",
+          "name": "Notion API"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Route": {
+      "main": [
+        [
+          {
+            "node": "Route Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Switch": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent5",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent5": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent3": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Responses": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a page in Notion": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "01d7aa43-3e7f-4888-bc72-ae44e235d8fb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "afe14e1af7129d99427c6eb553498a749f8203639e236b98ccb87b8c2b677801"
+  },
+  "id": "e0so4Eq9hz8eoVoz",
+  "tags": []
+}
